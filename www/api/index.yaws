@@ -1,0 +1,20 @@
+<html>
+<head>
+    <title>Test</title>
+</head>
+
+<body>
+
+<erl>
+
+out(Arg) ->
+    Uri = yaws_api:request_url(Arg),
+    Path = string:tokens(Uri#url.path,"/"),
+    {ehtml,Path}.
+
+</erl>
+
+test
+
+</body>
+</html>
