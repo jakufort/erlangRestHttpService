@@ -1,5 +1,0 @@
-<erl>
-
-out(Arg) ->
-    {html,"nothing to see"}.
-</erl>

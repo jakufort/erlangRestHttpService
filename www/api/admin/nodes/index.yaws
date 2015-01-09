@@ -1,7 +1,0 @@
-<erl>
-
-out(Arg) ->
-    Method = httpRestService:method(Arg),
-    httpRestService:handle(Method,Arg).
-
-</erl>
