@@ -1,302 +1,348 @@
 -module(httpRestService).
 -include("/home/fortun/git/yaws/include/yaws_api.hrl").
+%-include("jiffy.app").
 
--export([method/1,handle/2,out/1,initialize/2,addMeasurerFunction/2, select/2]).
+-export([handle/2, out/1, initialize/2, addMeasurer/2, initialize/3, createSchema/3]).
 
--import(lists,[foreach/2,foldr/3]).
--import(string,[equal/2]).
+-import(lists, [foreach/2, foldr/3]).
+-import(string, [equal/2,to_integer/1]).
 
--record(admins,{login,password}).
+-record(admins, {login, password}).
 
--record(measurers,{name,password}).
+-record(measurers, {name, password}).
 
--record(measures,{timestamp,measure}).
+-record(measures, {timestamp, measure}).
+
+-record(dbNodes,{name, empty}).
 
 %-record(nodes,{index,nodeName}).
 
 
-initialize(AdminName,AdminPassword) ->
-    %ok = mnesia:create_schema(node()),
-    %mnesia:create_schema(node()),
+initialize(AdminName, AdminPassword) ->
+  createSchema(AdminName, AdminPassword, [node()]).
 
-    application:start(mnesia),
+initialize(AdminName, AdminPassword, Nodes) ->
+  createSchema(AdminName,AdminPassword,Nodes).
 
-    %% Creating table with measurers (used to authenticate)
-    mnesia:create_table(measurers,
-        [{attributes, record_info(fields, measurers)},
-            {disc_copies, [node()]}
-        ]),
+createSchema(AdminName, AdminPassword, Nodes) ->
+  application:start(mnesia),
 
-    %% Creating table with admins (used to authenticate)
-    mnesia:create_table(admins,
-        [{attributes, record_info(fields,admins)},
-            {disc_copies,[node()]}
-        ]),
+  %% Creating table with measurers (used to authenticate)
+  mnesia:create_table(measurers,
+    [{attributes, record_info(fields, measurers)},
+      {disc_copies, Nodes}
+    ]),
 
-    Fun = fun() -> mnesia:write(#admins{login = AdminName,password = AdminPassword}) end,
-    mnesia:transaction(Fun),
+  %% Creating table with admins (used to authenticate)
+  mnesia:create_table(admins,
+    [{attributes, record_info(fields, admins)},
+      {disc_copies, Nodes}
+    ]),
 
-    application:stop(mnesia).
+  mnesia:create_table(dbNodes,
+    [{attributes, record_info(fields,dbNodes)},
+      {disc_copies,Nodes}
+    ]),
+
+  %%TODO check if it would work
+
+  lists:foreach(fun(Node) ->
+    F = fun() -> mnesia:write(#dbNodes{name = Node, empty = ""}) end,
+    mnesia:transaction(F)
+  end,Nodes),
+
+  Fun = fun() -> mnesia:write(#admins{login = AdminName, password = AdminPassword}) end,
+  mnesia:transaction(Fun),
+
+  application:stop(mnesia).
 
 out(Arg) ->
-    %{ehtml,io_lib:format("A#arg.appmoddata = ~p~n",[Arg#arg.appmoddata])}.
-    %{html,"hi"}.
-    case Arg#arg.pathinfo of
-        "/" -> {html,"no!"};
-        undefined -> {html,"no!"};
-        _ ->
-            handle(method(Arg),Arg)
-    end.
+  %{ehtml,io_lib:format("A#arg.appmoddata = ~p~n",[Arg#arg.appmoddata])}.
+  %{html,"hi"}.
+  case Arg#arg.pathinfo of
+    "/" -> {html, "no!"};
+    undefined -> {html, "no!"};
+    _ ->
+      handle(method(Arg), Arg)
+  end.
 
 method(Arg) ->
-    Rec = Arg#arg.req,
-    Rec#http_request.method.
+  Rec = Arg#arg.req,
+  Rec#http_request.method.
 
-handle(Method,Arg) ->
-    [Type|T] = string:tokens(Arg#arg.pathinfo,"/"),
-    case Type of
-        "measures" -> handle(Method,Arg,T);
-        _ -> %%TODO react to api/something that is not measures
-            {html,"Nothing"}
-    end.
+handle(Method, Arg) ->
+  [Type | T] = string:tokens(Arg#arg.pathinfo, "/"),
+  case Type of
+    "measures" -> handle(Method, Arg, T);
+    _ ->
+      reactToWrongWay()
+  end.
+
+reactToWrongWay() ->
+  {status,404}.
 
 
 %%%%%%%%%%%%%%%
 %%%%  GET  %%%%
 %%%%%%%%%%%%%%%
 
-%%%%    MEASURES
+handle('GET', _, []) ->
+  %list all measurers
+  returnJson(
+    makeJson(
+      selectAll(measurers),
+      fun({_,Name,_},Acc) -> [list_to_binary(Name)] ++ [list_to_binary(Acc)] end));
 
-handle('GET',_,[]) ->
-    %list all measurers
-    List = select_all(measurers),
-    Str = lists:foldr(fun(X,Acc) -> X ++ "<br/>" ++ Acc end,"",List),
-    {html,Str};
+handle('GET', Arg, [MeasurerName]) ->
+  case measurerExists(MeasurerName) of
+    true ->
+      case yaws_api:parse_query(Arg) of
+        [] ->
+          %io:format("~p",[selectAll(list_to_atom(MeasurerName))]),
+          returnJson(
+            makeJson(
+              selectAll(list_to_atom(MeasurerName)),
+              fun({_,Timestamp,Measure}, Acc) -> [{[{timestamp,Timestamp},{value,Measure}]}] ++ Acc end));
+        [{"limit", Limit}] ->
+          case string:to_integer(Limit) of
+            {L,[]} ->
+              returnJson(
+              makeJson(
+                selectWithLimit(list_to_atom(MeasurerName),L),
+                fun({_,Timestamp,Measure}, Acc) -> [{[{timestamp,Timestamp},{value,Measure}]}] ++ Acc end));
 
-handle('GET',Arg,[MeasurerName]) ->
-    case measurerExists(MeasurerName) of
-        true ->
-            case yaws_api:parse_query(Arg) of
-                [] ->
-                    Measures = select_all(MeasurerName),
-                    Str = lists:foldr(fun(X,Acc) -> X ++ "<br/>" ++ Acc end,"",Measures),
-                    {html,Str};
-                [{"limit",Limit}] ->
-                    Measures = selectWithLimit(MeasurerName,Limit),
-                    Str = lists:foldr(fun(X,Acc) -> X ++ "<br/>" ++ Acc end,"",Measures),
-                    {html,Str};
-                _ -> {html,"error"}
-            end;
-        false ->
-            {html,"wrong way"}
-    end;
-    %%TODO send all measures (JSON? XML?)
+            {error,_} -> {status,400};
+            _ -> {status,400}
+          end;
+        _ -> {status, 400}
+      end;
+    false ->
+      reactToWrongWay()
+  end;
 
-handle('GET',_,_) ->
-    {html,"wrong way"};
+handle('GET', _, _) ->
+  reactToWrongWay();
+
 
 %%%%%%%%%%%%%%
 %%%% POST %%%%
 %%%%%%%%%%%%%%
 
-handle('POST',Arg,[]) ->
-    %
-%%     Fun = fun() ->
-%%             [Name,Password,Measure,Time] = yaws_api:parse_post(Arg),
-%%             Row = select(nodes,Name),
-%%             Row#nodes.pid ! {Name,Password,Measure,Time}
-%%         end,
-%%     spawn(Fun),
-    %% TODO add new measurer to database - post should contain username and password so it can be authenticated and then executed
-%%     F = fun(Parent) ->
-%%         case yaws_api:parse_post(Arg) of
-%%             [{"name",Username},{"password",Password},{"measurer",MeasurerName},{"measurerPassword",MeasurerPassword}] ->
-%%                 case authenticate(admins,Username,Password) of
-%%                     false ->
-%%                         %% TODO
-%%                         Parent ! {self(),{html,"error"}};
-%%                     true ->
-%%                         addMeasurer(MeasurerName,MeasurerPassword),
-%%                         %% TODO return new url (measures/MeasurerName)
-%%                         Parent ! {self(),{html,"success"}}
-%%                 end;
-%%             _ -> Parent ! {self(),{status,400}}
-%%         end
-%%     end,
+handle('POST', Arg, []) ->
+  case yaws_api:parse_post(Arg) of
+    [{"name", Username}, {"password", Password}, {"measurer", MeasurerName}, {"measurerPassword", MeasurerPassword}] ->
+      case authenticate(admins, Username, Password) of
+        false ->
+          badPassword();
+        true ->
+          addMeasurer(MeasurerName, MeasurerPassword)
+          %% TODO return new url (measures/MeasurerName)
+      end;
+    _ ->
+      {status,400}
+  end;
 
-    Pid = spawn(?MODULE,addMeasurerFunction,[Arg,self()]),
-    receive
-        {Pid,Res} -> Res
-    end;
-
-handle('POST',_,[MeasurerName]) ->
-    %% TODO what should be done here?
-    {html,"smth"};
-
-handle('POST',_,_) ->
-    {html,"wrong way"};
+handle('POST', _, _) ->
+  reactToWrongWay();
 
 
 %%%%%%%%%%%%%%
 %%%% PUT %%%%%
 %%%%%%%%%%%%%%
 
-handle('PUT',Arg,[]) ->
-    %% TODO replace measurers with new "collection" of measurers
-    {html,"Put"};
+handle('PUT', Arg, []) ->
+  {[{<<"measurers">>,Data}]} = jiffy:decode(Arg#arg.clidata),
+  %io:format("~p\n",[Data]),
+  replaceMeasurers(Data),
+  {status, 201};
 
-handle('PUT',Arg,[MeasurerName]) ->
-    %{M,S,MS} = now(),
-    %M * 1000000 * 1000000 + S * 1000000 + MS,
-    case measurerExists(MeasurerName) of
-        true ->
-            [{"password",Pass},{"timestamp",Timestamp},{"measure",Measure}] = yaws_api:parse_query(Arg),
+handle('PUT', Arg, [MeasurerName]) ->
+  case measurerExists(MeasurerName) of
+    true ->
+      case Arg#arg.headers#headers.content_type of
+        "application/x-www-form-urlencoded" ->
+          [{"password",Password},{"timestamp",Timestamp},{"value",Value}] = yaws_api:parse_query( Arg#arg{ querydata = Arg#arg.clidata } ),
+          handleAddingMeasure(MeasurerName,Password,Timestamp,Value);
+        "application/json" ->
+          {[{_,Password},{_,Timestamp},{_,Value}]} = jiffy:decode(Arg#arg.clidata),
+          handleAddingMeasure(MeasurerName,binary_to_list(Password),integer_to_list(Timestamp),float_to_list(Value))
+      end;
+    false ->
+      reactToWrongWay()
+  end;
 
-            case authenticate(measurers,MeasurerName,Pass) of
-                false ->
-                    %% TODO
-                    {status,404};
-                true ->
-                    Fun = fun() ->
-                        mnesia:write(MeasurerName, #measures{ timestamp = Timestamp, measure = Measure}, write)
-                    end,
-                    mnesia:transaction(Fun),
-                    {html,"ok"}
-            end;
-        false ->
-            {html,"wrong way"}
-    end;
-
-handle('PUT',_,_) ->
-    {html,"wrong way"};
+handle('PUT', _, _) ->
+  reactToWrongWay();
 
 
 %%%%%%%%%%%%%%
 %%% DELETE %%%
 %%%%%%%%%%%%%%
 
-handle('DELETE',Arg,T) ->
-    [{"name",Name},{"password",Password}] = yaws_api:parse_query(Arg),
-    case authenticate(admins,Name,Password) of
+handle('DELETE', Arg, T) ->
+  case yaws_api:parse_query( Arg#arg{ querydata = Arg#arg.clidata } ) of
+    [{"name", Name}, {"password", Password}] ->
+      case authenticate(admins, Name, Password) of
         false ->
-            %% TODO
-            {status,400};
+          badPassword();
         true ->
-            handleDel(Arg,T)
-    end;
+          handleDel(Arg, T)
+      end;
+    Other ->
+      %% TODO authenticate somehow for DELETE
+      io:format("~p",[Arg#arg.clidata]),
+      handleDel(Arg,T)
+  end;
+
 
 %%%%%%%%%%%%%%%
 %%% OPTIONS %%%
 %%%%%%%%%%%%%%%
 
-handle('OPTIONS',_,_) ->
-    {html,"Options:<br/> GET <br/> PUT <br/> POST <br/> DELETE"};
+handle('OPTIONS', _, []) ->
+  {header, "Allow: GET,PUT,POST,DELETE"};
 
+handle('OPTIONS',_,[MeasurerName]) ->
+  case measurerExists(MeasurerName) of
+    true ->
+      {header, "Allow: GET,PUT,DELETE"};
+    _ ->
+      {header, "Allow:"}
+  end;
 
 %%%%%%%%%%%%%%%
 %%% UNKNOWN %%%
 %%%%%%%%%%%%%%%
 
-handle(_,_,_) ->
-    {html,"unknown"}.
+handle(_, _, _) ->
+  {html, "unknown"}.
 
+badPassword() ->
+  {status,401}.
 
 %%% Handle DELETE after Authentication
 
-handleDel(_,[]) ->
-    Measurers = select_all(measurers),
-    lists:foreach(fun(X) -> deleteTable(X) end,Measurers),
-    mnesia:clear_table(measurers),
-    {html,"Delete"};
+handleDel(_, []) ->
+  Measurers = selectAll(measurers),
+  lists:foreach(fun({_,Name,_}) -> deleteTable(list_to_atom(Name)) end, Measurers),
+  application:start(mnesia),
+  mnesia:clear_table(measurers),
+  %application:stop(mnesia),
+  {html, "Delete"};
 
-handleDel(_,[MeasurerName]) ->
-    case measurerExists(MeasurerName) of
-        true ->
-            deleteTable(MeasurerName),
-            deleteRecord(measurers,MeasurerName),
-            {html,"Delete" ++ MeasurerName};
-        false ->
-            {html,"wrong way"}
-    end;
+handleDel(_, [MeasurerName]) ->
+  case measurerExists(MeasurerName) of
+    true ->
+      deleteTable(list_to_atom(MeasurerName)),
+      deleteRecord(measurers, MeasurerName),
+      {html, "Delete" ++ MeasurerName};
+    false ->
+      reactToWrongWay()
+  end;
 
-handleDel(_,_) ->
-    {html,"wrong way"}.
+handleDel(_, _) ->
+  reactToWrongWay().
+
+%% JSON handling
+
+makeJson(L,Fun) ->
+  List = lists:foldr(Fun, [], L),
+  jiffy:encode(List).
+
+returnJson(Json) ->
+  {content,
+    "application/json; charset=iso-8859-1",
+    Json}.
 
 %%% admin
 
-authenticate(Table,Name,Password) ->
-    case select(Table,Name) of
-        [{Table,_,Pass}] ->
-            string:equal(Pass,Password);
-        _ -> false
-    end.
+authenticate(Table, Name, Password) ->
+  case select(Table, Name) of
+    [{Table, _, Pass}] ->
+      string:equal(Pass, Password);
+    _ -> false
+  end.
 
-addMeasurer(Name,Password) ->
-    F = fun() ->
-        application:start(mnesia),
-        mnesia:create_table(Name,
-            [{attributes, record_info(fields,measures)},
-                {index,[#measures.timestamp]},
-                {disc_copies, node()}]),
+%%%   Measure
 
-        Fun = fun() ->
-            mnesia:write(#measurers{ name = Name, password = Password})
-        end,
-        mnesia:transaction(Fun),
-        application:stop(mnesia)
-    end,
-    spawn(F).
+handleAddingMeasure(Name,Password,Timestamp,Value) ->
+  case authenticate(measurers, Name, Password) of
+    false ->
+      badPassword();
+    true ->
 
-addMeasurerFunction(Arg,Parent) ->
-    case yaws_api:parse_post(Arg) of
-        [{"name",Username},{"password",Password},{"measurer",MeasurerName},{"measurerPassword",MeasurerPassword}] ->
-            case authenticate(admins,Username,Password) of
-                false ->
-                    %% TODO
-                    Parent ! {self(),{html,"error"}};
-                true ->
-                    addMeasurer(MeasurerName,MeasurerPassword),
-                    %% TODO return new url (measures/MeasurerName)
-                    Parent ! {self(),{html,"success"}}
-            end;
-        _ -> Parent ! {self(),{ehtml,
-            {pre, [],
-                io_lib:format('~p', [yaws_api:parse_post(Arg)])}}}
-    end.
+      try addMeasure(list_to_atom(Name),list_to_integer(Timestamp),list_to_float(Value)) of
+        R -> R
+      catch
+        badarg -> {status,400}
+      end
+  end.
 
-%%% Measurers
+replaceMeasurers(Data) ->
+  %%removing all measures and measurers
+  handleDel(a,[]),
+  lists:foreach(
+    fun({[{_,N},{_,Password},{_,Measures}]}) ->
+      Name = binary_to_list(N),
+      addMeasurer(Name,binary_to_list(Password)),
+      lists:foreach(fun({[{_,Timestamp},{_,Value}]}) ->
+        addMeasure(list_to_atom(Name),Timestamp,Value)
+      end,Measures)
+    end,Data).
+
+addMeasurer(Name, Password) ->
+  application:start(mnesia),
+  Nodes = lists:foldr(fun({_,Node,_},Acc) ->  [Node] ++ Acc end,[],selectAll(dbNodes)),
+  mnesia:create_table(list_to_atom(Name),
+    [{attributes, record_info(fields, measures)},
+     {disc_copies, Nodes},
+      {record_name,measures}]),
+
+  Fun = fun() ->
+    mnesia:write(#measurers{name = Name, password = Password})
+  end,
+  mnesia:transaction(Fun),
+  [{status,201},{ehtml,{a,[{href,Name}],Name}}].
 
 measurerExists(Measurer) ->
-    case select(measurers,Measurer) of
-        [{measurers,_,_}] -> true;
-        _ -> false
-    end.
+  case select(measurers, Measurer) of
+    [{measurers, _, _}] -> true;
+    _ -> false
+  end.
+
+addMeasure(MeasurerName,Timestamp,Measure) ->
+  application:start(mnesia),
+  Fun = fun() ->
+    mnesia:write(MeasurerName, #measures{timestamp = Timestamp, measure = Measure}, write)
+  end,
+  mnesia:activity(transaction,Fun).
 
 %%% mnesia
 
-select_all(Table) ->
-    application:start(mnesia),
-    F = fun() -> mnesia:select(Table,[{'_',[],['$_']}]) end,
-    mnesia:activity(transaction, F).
+selectAll(Table) ->
+  application:start(mnesia),
+  F = fun() -> mnesia:select(Table, [{'_', [], ['$_']}]) end,
+  mnesia:activity(transaction, F).
 
-select(Table,Index) ->
-    application:start(mnesia),
-    F = fun() -> mnesia:match_object(Table,{Table,Index,'_'},read) end,
-    mnesia:activity(transaction,F).
+select(Table, Index) ->
+  application:start(mnesia),
+  F = fun() -> mnesia:match_object(Table, {Table, Index, '_'}, read) end,
+  mnesia:activity(transaction, F).
 
-selectWithLimit(Table,Limit) ->
-    application:start(mnesia),
-    F = fun() -> mnesia:select(Table,[{'_',[],['$_']}],Limit,read) end,
-    mnesia:activity(transaction,F).
+selectWithLimit(Table, Limit) ->
+  limitSelect(lists:sort(fun({_,A,_},{_,B,_}) -> A>B end,selectAll(Table)),Limit).
+
+limitSelect(_,0) -> [];
+limitSelect([],_) -> [];
+limitSelect([H|T], Limit) ->
+  [H]++limitSelect(T,Limit-1).
 
 deleteTable(Table) ->
-    application:start(mnesia),
-    F = fun() -> mnesia:delete_table(Table) end,
-    mnesia:activity(transaction,F),
-    application:stop(mnesia).
+  mnesia:delete_table(Table).
+  %application:stop(mnesia).
 
-deleteRecord(Table,Record) ->
-    application:start(mnesia),
-    F = fun() -> mnesia:delete({Table,Record}) end,
-    mnesia:activity(transaction,F),
-    application:stop(mnesia).
+deleteRecord(Table, Record) ->
+  application:start(mnesia),
+  F = fun() -> mnesia:delete(Table, Record, write) end,
+  mnesia:activity(transaction, F).
+  %application:stop(mnesia).

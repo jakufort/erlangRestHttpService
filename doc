@@ -1,0 +1,63 @@
+Konfiguracja Yaws:
+W pliku yaws.conf powinno podać się ścieżkę dostępu do plików .beam serwisu oraz jiffy'ego np.
+
+ebin_dir = /var/git/httpRestService/ebin
+ebin_dir = /var/git/httpRestService/lib/ebin/jiffy
+
+W konfiguracji serwera (<server name>), powinna zostać dodana linia:
+appmods = <nazwaSciezki,httpRestService>
+
+(serwis będzie wtedy dostępny pod http://name/nazwaSciezki/measures )
+
+Dostępne operacje:
+a) GET 
+	- dla "measures" zwraca listę czujników
+	- dla "measures/czujnik" zwraca wyniki czujnika (możliwe jest wywołanie "measures/czujnik?limit=X (np. limit=10) by zwrócić ostatnie X pomiarów)
+b) POST
+	- dla "measures" pozwala dodać nowy czujnik do bazy. Pola: 
+			- name - login administratora
+			- password - hasło administratora
+			- measurer - nazwa czujnika
+			- measurerPassword - hasło czujnika
+
+c) PUT
+	- dla "measures" pozwala zastąpić aktualne czujniki nowymi (przesyłane w formacie JSON)
+	- dla "measures/czujnik" pozwala dodać nowy pomiar, poprzez "application/x-www-form-urlencoded" oraz "application/json". Dla obu pola to:
+			- password - hasło czujnika
+			- timestamp - znacznik czasowy pomiaru
+			- value - wartość pomiaru
+d) DELETE
+	- dla "measures" usuwa wszystkie czujniki
+	- dla "measures/czujnik" usuwa wszystkie pomiary czujnika oraz czujnik z bazy
+
+
+{
+    "measurers": [
+        {
+            "name": "m1",
+            "password": "m1",
+            "measures": [
+                {
+                    "timestamp": 123,
+                    "value": 13.0
+                },
+                {
+                    "timestamp": 141,
+                    "value": 41.0
+                }
+            ]
+        },
+        {
+            "name": "m2",
+            "password": "m2",
+            "measures": [
+                {
+                    "timestamp": 134,
+                    "value": 14.0
+                }
+            ]
+        }
+    ]
+}
+
+przykładowy JSON dla zastąpienia mierników
