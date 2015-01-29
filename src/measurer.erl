@@ -12,9 +12,11 @@
 -import(httpc,[request/4]).
 -import(random,[uniform/1]).
 -import(math,[pow/2]).
+-import(base64,[encode_to_string/1]).
+-import(lists,[append/1]).
 
 %% API
--export([init/0,startSending/2, sendLoop/2,addMeasurerToServer/2,deleteMeasurer/1,sendMeasure/2, sendMeasureJson/2  ]).
+-export([init/0,startSending/2, sendLoop/2,addMeasurerToServer/2,deleteMeasurer/3,sendMeasure/2, sendMeasureJson/2  ]).
 
 init() ->
   inets:start().
@@ -23,9 +25,13 @@ addMeasurerToServer(Name,Password) ->
   makeRequest(post,"http://localhost:8000/testSite/api/measures/",[],"application/x-www-form-urlencoded",
     "name=admin&password=admin&measurer="++Name++"&measurerPassword="++Password,[],[]).
 
-deleteMeasurer(Name) ->
-  makeRequest(delete,"http://localhost:8000/testSite/api/measures/"++Name,[],"application/x-www-form-urlencoded",
-  "name=admin&password=admin",[],[]).
+deleteMeasurer(Username,Password,MeasurerName) ->
+  makeRequest(delete,"http://localhost:8000/testSite/api/measures/"++MeasurerName,
+    [auth_header(Username,Password)],"", "",[],[]).
+
+auth_header(User, Pass) ->
+    Encoded = base64:encode_to_string(lists:append([User,":",Pass])),
+    {"Authorization","Basic " ++ Encoded}.
 
 startSending(MeasurerName, MeasurerPassword) ->
   Pid = spawn(?MODULE,sendLoop,[MeasurerName,MeasurerPassword]),

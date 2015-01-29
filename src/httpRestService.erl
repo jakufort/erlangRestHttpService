@@ -2,7 +2,7 @@
 -include("/home/fortun/git/yaws/include/yaws_api.hrl").
 %-include("jiffy.app").
 
--export([handle/2, out/1, initialize/2, addMeasurer/2, initialize/3, createSchema/3]).
+-export([handle/2, out/1, initialize/2, addMeasurer/2, initialize/3]).
 
 -import(lists, [foreach/2, foldr/3]).
 -import(string, [equal/2,to_integer/1]).
@@ -19,13 +19,18 @@
 
 
 initialize(AdminName, AdminPassword) ->
-  createSchema(AdminName, AdminPassword, [node()]).
+  createSchema(AdminName, AdminPassword, []).
 
 initialize(AdminName, AdminPassword, Nodes) ->
   createSchema(AdminName,AdminPassword,Nodes).
 
-createSchema(AdminName, AdminPassword, Nodes) ->
+createSchema(AdminName, AdminPassword, Nodes_) ->
   application:start(mnesia),
+  Nodes = lists:append([Nodes_,[node()]]),
+
+  mnesia:create_schema(Nodes),
+  mnesia:change_config(extra_db_nodes,Nodes),
+  foreach(fun(Node) -> mnesia:change_table_copy_type(schema,Node,disc_copies) end,Nodes),
 
   %% Creating table with measurers (used to authenticate)
   mnesia:create_table(measurers,
@@ -57,8 +62,6 @@ createSchema(AdminName, AdminPassword, Nodes) ->
   application:stop(mnesia).
 
 out(Arg) ->
-  %{ehtml,io_lib:format("A#arg.appmoddata = ~p~n",[Arg#arg.appmoddata])}.
-  %{html,"hi"}.
   case Arg#arg.pathinfo of
     "/" -> {html, "no!"};
     undefined -> {html, "no!"};
@@ -98,7 +101,6 @@ handle('GET', Arg, [MeasurerName]) ->
     true ->
       case yaws_api:parse_query(Arg) of
         [] ->
-          %io:format("~p",[selectAll(list_to_atom(MeasurerName))]),
           returnJson(
             makeJson(
               selectAll(list_to_atom(MeasurerName)),
@@ -108,7 +110,7 @@ handle('GET', Arg, [MeasurerName]) ->
             {L,[]} ->
               returnJson(
               makeJson(
-                selectWithLimit(list_to_atom(MeasurerName),L),
+                selectWithLimit(list_to_atom(MeasurerName),L,fun({_,A,_},{_,B,_}) -> A>B end),
                 fun({_,Timestamp,Measure}, Acc) -> [{[{timestamp,Timestamp},{value,Measure}]}] ++ Acc end));
 
             {error,_} -> {status,400};
@@ -136,7 +138,6 @@ handle('POST', Arg, []) ->
           badPassword();
         true ->
           addMeasurer(MeasurerName, MeasurerPassword)
-          %% TODO return new url (measures/MeasurerName)
       end;
     _ ->
       {status,400}
@@ -151,10 +152,19 @@ handle('POST', _, _) ->
 %%%%%%%%%%%%%%
 
 handle('PUT', Arg, []) ->
-  {[{<<"measurers">>,Data}]} = jiffy:decode(Arg#arg.clidata),
-  %io:format("~p\n",[Data]),
-  replaceMeasurers(Data),
-  {status, 201};
+  case Arg#arg.headers#headers.authorization of
+    {Name,Password,_} ->
+      case authenticate(admins,Name,Password) of
+        false ->
+          badPassword();
+        true ->
+          {[{<<"measurers">>,Data}]} = jiffy:decode(Arg#arg.clidata),
+          replaceMeasurers(Data),
+          {status, 201}
+      end;
+    _ ->
+      [{status,401},{header, "WWW-Authenticate: Basic realm=\"REST API\""}]
+  end;
 
 handle('PUT', Arg, [MeasurerName]) ->
   case measurerExists(MeasurerName) of
@@ -180,20 +190,17 @@ handle('PUT', _, _) ->
 %%%%%%%%%%%%%%
 
 handle('DELETE', Arg, T) ->
-  case yaws_api:parse_query( Arg#arg{ querydata = Arg#arg.clidata } ) of
-    [{"name", Name}, {"password", Password}] ->
-      case authenticate(admins, Name, Password) of
+  case Arg#arg.headers#headers.authorization of
+    {Login,Password,_} ->
+      case authenticate(admins,Login,Password) of
         false ->
           badPassword();
         true ->
-          handleDel(Arg, T)
+          handleDel(Arg,T)
       end;
-    Other ->
-      %% TODO authenticate somehow for DELETE
-      io:format("~p",[Arg#arg.clidata]),
-      handleDel(Arg,T)
+    _ ->
+      [{status,401},{header, "WWW-Authenticate: Basic realm=\"REST API\""}]
   end;
-
 
 %%%%%%%%%%%%%%%
 %%% OPTIONS %%%
@@ -227,15 +234,14 @@ handleDel(_, []) ->
   lists:foreach(fun({_,Name,_}) -> deleteTable(list_to_atom(Name)) end, Measurers),
   application:start(mnesia),
   mnesia:clear_table(measurers),
-  %application:stop(mnesia),
-  {html, "Delete"};
+  {status, 200};
 
 handleDel(_, [MeasurerName]) ->
   case measurerExists(MeasurerName) of
     true ->
       deleteTable(list_to_atom(MeasurerName)),
       deleteRecord(measurers, MeasurerName),
-      {html, "Delete" ++ MeasurerName};
+      {status, 200};
     false ->
       reactToWrongWay()
   end;
@@ -270,7 +276,6 @@ handleAddingMeasure(Name,Password,Timestamp,Value) ->
     false ->
       badPassword();
     true ->
-
       try addMeasure(list_to_atom(Name),list_to_integer(Timestamp),list_to_float(Value)) of
         R -> R
       catch
@@ -302,7 +307,7 @@ addMeasurer(Name, Password) ->
     mnesia:write(#measurers{name = Name, password = Password})
   end,
   mnesia:transaction(Fun),
-  [{status,201},{ehtml,{a,[{href,Name}],Name}}].
+  [{status,201},{html,Name}].
 
 measurerExists(Measurer) ->
   case select(measurers, Measurer) of
@@ -329,8 +334,8 @@ select(Table, Index) ->
   F = fun() -> mnesia:match_object(Table, {Table, Index, '_'}, read) end,
   mnesia:activity(transaction, F).
 
-selectWithLimit(Table, Limit) ->
-  limitSelect(lists:sort(fun({_,A,_},{_,B,_}) -> A>B end,selectAll(Table)),Limit).
+selectWithLimit(Table, Limit, Fun) ->
+  limitSelect(lists:sort(Fun,selectAll(Table)),Limit).
 
 limitSelect(_,0) -> [];
 limitSelect([],_) -> [];
