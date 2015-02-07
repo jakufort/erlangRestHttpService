@@ -8,33 +8,38 @@ yaws.conf should be modified like this to work (of course you should modify path
 ebin_dir = /var/git/httpRestService/ebin
 ebin_dir = /var/git/httpRestService/lib/ebin/jiffy
 
-In server configuration (<server name>) have to be line:
-appmods = <pathName,httpRestService>
+In server configuration (\<server name\>) have to be line:
+appmods = \<pathName,httpRestService\>
 
 (service will be available at adres: http://name/pathName/measures )
 
 Operations:
-a) GET 
-	- for "measures" returns list of measurers
-	- for "measures/measurerName" returns measures of this measurer (it's possible to do this: "measures/measurerName?limit=X (ie. limit=10) to return last X of measures)
-b) POST
-	- for "measures" it allows to add new measurer to database. Fields: 
-			- name - administrator login
-			- password - administrator password
-			- measurer - measurer name
-			- measurerPassword - measurer password
 
-c) PUT
-	- for "measures" it allows to replace all measurers with new ones (using JSON)
-	- for "measures/measurerName" allows to add new measure; can be used "application/x-www-form-urlencoded" or "application/json". For both fields are:
-			- password - measurer password
-			- timestamp - timestamp of measure
-			- value - measurement 
-d) DELETE
-	- for "measures" deletes all of the measurers
-	- for "measures/measurerName" it deletes all of the measures of this measurer and also this measurer from database
+**GET** 
+  - for "measures" - returns list of measurers
+  - for "measures/measurerName" - returns measures of this measurer (it's possible to do this: "measures/measurerName?limit=X (ie. limit=10) to return last X of measures)
 
+**POST**
+  - for "measures" it allows to add new measurer to database. Fields: 
+    * *name* - administrator login
+    * *password* - administrator password
+    * *measurer* - measurer name
+    * *measurerPassword* - measurer password
 
+**PUT**
+  - for "measures" it allows to replace all measurers with new ones (using JSON)
+  - for "measures/measurerName" allows to add new measure; can be used "application/x-www-form-urlencoded" or "application/json". For both fields are:
+    * *password* - measurer password
+    * *timestamp* - timestamp of measure
+    * *value* - measurement 
+
+**DELETE**
+  - for "measures" deletes all of the measurers
+  - for "measures/measurerName" it deletes all of the measures of this measurer and also this measurer from database
+
+**Example JSON for PUT (replacing all measurers)**
+
+```
 {
     "measurers": [
         {
@@ -63,7 +68,7 @@ d) DELETE
         }
     ]
 }
+```
 
-Example JSON for PUT (replacing all measurers)
 
 
