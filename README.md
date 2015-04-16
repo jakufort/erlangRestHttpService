@@ -4,13 +4,14 @@ erlangRestHttpService
 HTTP server with REST API to store measures written in erlang
 
 yaws.conf should be modified like this to work (of course you should modify paths to your environment):
-
+```
 ebin_dir = /var/git/httpRestService/ebin
 ebin_dir = /var/git/httpRestService/lib/ebin/jiffy
-
+```
 In server configuration (\<server name\>) have to be line:
+```
 appmods = \<pathName,httpRestService\>
-
+```
 (service will be available at adres: http://name/pathName/measures )
 
 Operations:
